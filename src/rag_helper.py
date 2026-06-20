@@ -19,37 +19,65 @@ Context:
 {context}
 """
 
-def search(question, course = "llm-zoomcamp"):
-    return index.search(question, boost_dict = {"question": 2, "section": 0.5}, 
-                        filter_dict = {"course": course}, 
-                        num_results = 5)
+class RAGBase:
 
-def build_context(search_results):
-    lines = []
+    def __init__(
+        self,
+        index,
+        llm_client,
+        instructions=INSTRUCTION,
+        prompt_template= USER_PROMPT_TEMPLATE,
+        course="llm-zoomcamp",
+        model="llama-3.1-8b-instant"
+    ):
+        self.index = index
+        self.llm_client = llm_client
+        self.instructions = instructions
+        self.course = course
+        self.prompt_template = prompt_template
+        self.model = model
 
-    for doc in search_results:
-        lines.append(doc["section"])
-        lines.append("Q: " + doc["question"])
-        lines.append("A: " + doc["answer"])
-        lines.append("")
+    def search(self, query, num_results=5):
+        boost_dict = {"question": 3.0, "section": 0.5}
+        filter_dict = {"course": self.course}
 
-    return "\n".join(lines).strip()
+        return self.index.search(
+            query,
+            num_results=num_results,
+            boost_dict=boost_dict,
+            filter_dict=filter_dict
+        )
+    
+    def build_context(self, search_results):
+        lines = []
 
-def build_prompt(question, search_results):
-    context = build_context(search_results)
-    prompt = USER_PROMPT_TEMPLATE.format(question = question, context = context)
-    return prompt.strip()
+        for doc in search_results:
+            lines.append(doc["section"])
+            lines.append("Q: " + doc["question"])
+            lines.append("A: " + doc["answer"])
+            lines.append("")
 
+        return "\n".join(lines).strip()
 
-def llm(instructions, user_prompt, model="llama-3.1-8b-instant"):
-    message_history = [
-        {"role": "developer", "content": INSTRUCTION},
-        {"role": "user", "content": user_prompt}
-    ]
+    def build_prompt(self, query, search_results):
+        context = self.build_context(search_results)
+        return self.prompt_template.format(
+            question=query, context=context
+        )
+    def llm(self, prompt):
+        message_history = [
+            {"role": "developer", "content": self.instructions},
+            {"role": "user", "content": prompt}
+        ]
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=message_history
-    )
+        response = self.llm_client.chat.completions.create(
+            model=self.model,
+            messages=message_history
+        )
 
-    return response.choices[0].message.content
+        return response.choices[0].message.content
+    def rag(self, query):
+        search_results = self.search(query)
+        prompt = self.build_prompt(query, search_results)
+        answer = self.llm(prompt)
+        return answer
